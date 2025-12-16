@@ -1,0 +1,91 @@
+name: Push Wiki Pages
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  push_wiki_pages:
+    if: >
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'pushwiki')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: changed
+        uses: tj-actions/changed-files@v45
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha }}
+          sha: ${{ github.event.pull_request.head.sha }}
+          files: "**/*.md"
+
+      - name: Create/Update wiki pages (title from H1) + update Home
+        if: steps.changed.outputs.all_changed_files != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pr="${{ github.event.pull_request.number }}"
+          sha="${{ github.event.pull_request.merge_commit_sha }}"
+          shortsha="${sha:0:7}"
+
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
+          cd wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cd ..
+
+          slugify () {
+            echo "$1" \
+              | sed -e 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed -e 's/[[:space:]]\+/-/g' -e 's/[^a-z0-9._-]//g' -e 's/-\{2,\}/-/g' -e 's/^-//; s/-$//'
+          }
+
+          # Assicura Home.md
+          if [ ! -f wiki/Home.md ]; then
+            cat > wiki/Home.md <<'EOF'
+          # Home
+
+          ## Pages
+          EOF
+          fi
+
+          files="${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}"
+          for f in $files; do
+            [ -f "$f" ] || continue
+
+            # Titolo = primo H1 (# ...)
+            title="$(grep -m1 -E '^#[[:space:]]+' "$f" | sed -E 's/^#[[:space:]]+//')"
+            if [ -z "${title:-}" ]; then
+              title="$(basename "$f" .md)"
+            fi
+
+            slug="$(slugify "$title")"
+            page="${slug}.md"
+            target="wiki/${page}"
+
+            # Aggiorna pagina: sovrascrive con il contenuto del file
+            cp "$f" "$target"
+
+            # Aggiorna Home: aggiunge link se non presente
+            # Link wiki: [[Titolo|slug]]
+            if ! grep -Fq "[[$title|$slug]]" wiki/Home.md; then
+              {
+                echo ""
+                echo "- [[$title|$slug]] (PR #${pr}, ${shortsha})"
+              } >> wiki/Home.md
+            fi
+          done
+
+          cd wiki
+          git add .
+          git commit -m "Update wiki from PR #${pr} (${shortsha})" || exit 0
+          git push
