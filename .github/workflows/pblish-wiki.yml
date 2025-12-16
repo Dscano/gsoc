@@ -11,7 +11,7 @@ jobs:
   push_wiki_pages:
     if: >
       github.event.pull_request.merged == true &&
-      contains(github.event.pull_request.labels.*.name, 'pushwikipage')
+      contains(github.event.pull_request.labels.*.name, 'pushwiki')
     runs-on: ubuntu-latest
 
     steps:
