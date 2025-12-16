@@ -1,0 +1,38 @@
+name: Publish Wiki
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  publish:
+    if: >
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'publishwiki')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: changed
+        uses: tj-actions/changed-files@v45
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha }}
+          sha: ${{ github.event.pull_request.head.sha }}
+          files: "**/*.md"
+
+      - name: Stage added files
+        run: |
+          mkdir -p _wiki_publish
+          for f in ${{ steps.changed.outputs.added_files }}; do
+            mkdir -p "_wiki_publish/$(dirname "$f")"
+            cp "$f" "_wiki_publish/$f"
+          done
+
+      - name: Publish
+        uses: Andrew-Chen-Wang/github-wiki-action@v4
+        with:
+          path: _wiki_publish
+          token: ${{ secrets.GITHUB_TOKEN }}
