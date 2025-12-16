@@ -1,38 +1,37 @@
-name: Push Wiki Pages from PR
+name: Push Wiki Pages (title from Markdown)
 
 on:
   pull_request:
     types: [closed]
 
+permissions:
+  contents: write
+
 jobs:
-  push_wiki:
-    # Esegue solo se la PR è stata mergiata e ha la label "pushwikipage"
+  push_wiki_pages:
     if: >
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.labels.*.name, 'pushwikipage')
     runs-on: ubuntu-latest
 
     env:
-      # Modalità aggiornamento:
-      # - "append"  -> aggiunge il nuovo contenuto in fondo alla pagina wiki esistente
-      # - "replace" -> sovrascrive (aggiorna) la pagina wiki con il contenuto del file
-      WIKI_UPDATE_MODE: append
+      # replace = sovrascrive la pagina
+      # append  = appende in fondo se la pagina esiste già
+      WIKI_UPDATE_MODE: replace
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Lista file .md cambiati nella PR
-        id: changed
+      - id: changed
         uses: tj-actions/changed-files@v45
         with:
           base_sha: ${{ github.event.pull_request.base.sha }}
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Crea/aggiorna pagine su GitHub Wiki (solo .md)
+      - name: Create/Update wiki pages (use H1 as title)
         if: steps.changed.outputs.all_changed_files != ''
         shell: bash
         run: |
@@ -43,21 +42,39 @@ jobs:
           shortsha="${sha:0:7}"
           mode="${WIKI_UPDATE_MODE}"
 
-          # Clona la wiki (repo separato: <repo>.wiki.git)
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cd ..
 
-          # Processa SOLO file .md toccati (added + modified)
+          slugify () {
+            # 1) trim 2) sostituisce spazi con - 3) rimuove caratteri non safe 4) compatta ---
+            echo "$1" \
+              | sed -e 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed -e 's/[[:space:]]\+/-/g' -e 's/[^a-z0-9._-]//g' -e 's/-\{2,\}/-/g' -e 's/^-//; s/-$//'
+          }
+
           files="${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}"
+
           for f in $files; do
             [ -f "$f" ] || continue
 
-            # Nome pagina wiki = nome file (basename). Es: folder/a.md -> a.md
-            page="$(basename "$f")"
-            target="wiki/$page"
+            # Estrae il primo H1: una riga che inizia con "# "
+            title="$(grep -m1 -E '^#[[:space:]]+' "$f" | sed -E 's/^#[[:space:]]+//')"
+
+            # Fallback se non c'è H1: usa il basename
+            if [ -z "${title:-}" ]; then
+              title="$(basename "$f" .md)"
+            fi
+
+            slug="$(slugify "$title")"
+            if [ -z "$slug" ]; then
+              slug="$(basename "$f" .md)"
+            fi
+
+            target="wiki/${slug}.md"
 
             if [ "$mode" = "append" ] && [ -f "$target" ]; then
               {
@@ -68,13 +85,13 @@ jobs:
                 cat "$f"
               } >> "$target"
             else
-              # "replace" oppure pagina non esistente -> crea/aggiorna
               cp "$f" "$target"
             fi
+
+            echo "Mapped '$f' -> '$target' (title: $title)"
           done
 
           cd wiki
           git add .
-          git commit -m "Wiki update from PR #${pr} (${shortsha})" || exit 0
+          git commit -m "Update wiki from PR #${pr} (${shortsha})" || exit 0
           git push
-
