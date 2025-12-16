@@ -1,4 +1,4 @@
-name: Publish Wiki (append per file)
+name: Publish Wiki
 
 on:
   pull_request:
@@ -23,44 +23,25 @@ jobs:
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Append/update wiki pages
+      - name: Update wiki pages (md only)
         if: steps.changed.outputs.all_changed_files != ''
         shell: bash
         run: |
           set -euo pipefail
 
-          pr="${{ github.event.pull_request.number }}"
-          sha="${{ github.event.pull_request.merge_commit_sha }}"
-          shortsha="${sha:0:7}"
-
-          # Clone the wiki repo (separate git repo)
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cd ..
 
-          # Process changed markdown files (added + modified)
           for f in ${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}; do
             [ -f "$f" ] || continue
-
-            target="wiki/$f"
-            mkdir -p "$(dirname "$target")"
-
-            if [ -f "$target" ]; then
-              {
-                echo ""
-                echo "---"
-                echo "_Appended from PR #${pr} (${shortsha})_"
-                echo ""
-                cat "$f"
-              } >> "$target"
-            else
-              cp "$f" "$target"
-            fi
+            page="$(basename "$f")"
+            cp "$f" "wiki/$page"
           done
 
           cd wiki
           git add .
-          git commit -m "Update wiki from PR #${pr} (${shortsha})" || exit 0
+          git commit -m "Update wiki from PR #${{ github.event.pull_request.number }}" || exit 0
           git push
