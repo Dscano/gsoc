@@ -1,8 +1,11 @@
-name: Publish Wiki
+name: Publish Wiki (append pages)
 
 on:
   pull_request:
     types: [closed]
+
+permissions:
+  contents: write
 
 jobs:
   publish:
@@ -23,16 +26,43 @@ jobs:
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Stage added files
+      - name: Append pages to Wiki
+        if: steps.changed.outputs.all_changed_files != ''
+        shell: bash
         run: |
-          mkdir -p _wiki_publish
-          for f in ${{ steps.changed.outputs.added_files }}; do
-            mkdir -p "_wiki_publish/$(dirname "$f")"
-            cp "$f" "_wiki_publish/$f"
+          set -euo pipefail
+
+          pr="${{ github.event.pull_request.number }}"
+          shortsha="$(echo "${{ github.event.pull_request.merge_commit_sha }}" | cut -c1-7)"
+
+          # Clone the wiki repo
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
+          cd wiki
+
+          # Configure git identity for commit
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          cd ..
+
+          # For each changed md file, create a NEW wiki page (never overwrite)
+          for f in ${{ steps.changed.outputs.all_changed_files }}; do
+            [ -f "$f" ] || continue
+
+            dir="$(dirname "$f")"
+            base="$(basename "$f" .md)"
+
+            # Put pages under the same folder structure in the wiki (optional).
+            # If you want everything flat in root, set: targetdir="."
+            targetdir="wiki/$dir"
+            mkdir -p "$targetdir"
+
+            target="$targetdir/${base}-PR${pr}-${shortsha}.md"
+            cp "$f" "$target"
+            echo "Added wiki page: $target"
           done
 
-      - name: Publish
-        uses: Andrew-Chen-Wang/github-wiki-action@v4
-        with:
-          path: _wiki_publish
-          token: ${{ secrets.GITHUB_TOKEN }}
+          cd wiki
+          git add .
+          git commit -m "Append wiki pages from PR #${pr} (${shortsha})" || exit 0
+          git push
