@@ -1,4 +1,4 @@
-name: Push Wiki Pages (title from Markdown)
+name: Push Wiki Pages
 
 on:
   pull_request:
@@ -14,11 +14,6 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'pushwikipage')
     runs-on: ubuntu-latest
 
-    env:
-      # replace = sovrascrive la pagina
-      # append  = appende in fondo se la pagina esiste già
-      WIKI_UPDATE_MODE: replace
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +26,7 @@ jobs:
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Create/Update wiki pages (use H1 as title)
+      - name: Create/Update wiki pages (title from H1) + update Home
         if: steps.changed.outputs.all_changed_files != ''
         shell: bash
         run: |
@@ -40,7 +35,6 @@ jobs:
           pr="${{ github.event.pull_request.number }}"
           sha="${{ github.event.pull_request.merge_commit_sha }}"
           shortsha="${sha:0:7}"
-          mode="${WIKI_UPDATE_MODE}"
 
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
@@ -49,46 +43,46 @@ jobs:
           cd ..
 
           slugify () {
-            # 1) trim 2) sostituisce spazi con - 3) rimuove caratteri non safe 4) compatta ---
             echo "$1" \
               | sed -e 's/^[[:space:]]*//; s/[[:space:]]*$//' \
               | tr '[:upper:]' '[:lower:]' \
               | sed -e 's/[[:space:]]\+/-/g' -e 's/[^a-z0-9._-]//g' -e 's/-\{2,\}/-/g' -e 's/^-//; s/-$//'
           }
 
-          files="${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}"
+          # Assicura Home.md
+          if [ ! -f wiki/Home.md ]; then
+            cat > wiki/Home.md <<'EOF'
+          # Home
 
+          ## Pages
+          EOF
+          fi
+
+          files="${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}"
           for f in $files; do
             [ -f "$f" ] || continue
 
-            # Estrae il primo H1: una riga che inizia con "# "
+            # Titolo = primo H1 (# ...)
             title="$(grep -m1 -E '^#[[:space:]]+' "$f" | sed -E 's/^#[[:space:]]+//')"
-
-            # Fallback se non c'è H1: usa il basename
             if [ -z "${title:-}" ]; then
               title="$(basename "$f" .md)"
             fi
 
             slug="$(slugify "$title")"
-            if [ -z "$slug" ]; then
-              slug="$(basename "$f" .md)"
-            fi
+            page="${slug}.md"
+            target="wiki/${page}"
 
-            target="wiki/${slug}.md"
+            # Aggiorna pagina: sovrascrive con il contenuto del file
+            cp "$f" "$target"
 
-            if [ "$mode" = "append" ] && [ -f "$target" ]; then
+            # Aggiorna Home: aggiunge link se non presente
+            # Link wiki: [[Titolo|slug]]
+            if ! grep -Fq "[[$title|$slug]]" wiki/Home.md; then
               {
                 echo ""
-                echo "---"
-                echo "_Update da PR #${pr} (${shortsha})_"
-                echo ""
-                cat "$f"
-              } >> "$target"
-            else
-              cp "$f" "$target"
+                echo "- [[$title|$slug]] (PR #${pr}, ${shortsha})"
+              } >> wiki/Home.md
             fi
-
-            echo "Mapped '$f' -> '$target' (title: $title)"
           done
 
           cd wiki
