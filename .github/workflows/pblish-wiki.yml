@@ -1,11 +1,8 @@
-name: Publish Wiki (append pages)
+name: Publish Wiki (append per file)
 
 on:
   pull_request:
     types: [closed]
-
-permissions:
-  contents: write
 
 jobs:
   publish:
@@ -26,43 +23,44 @@ jobs:
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Append pages to Wiki
+      - name: Append/update wiki pages
         if: steps.changed.outputs.all_changed_files != ''
         shell: bash
         run: |
           set -euo pipefail
 
           pr="${{ github.event.pull_request.number }}"
-          shortsha="$(echo "${{ github.event.pull_request.merge_commit_sha }}" | cut -c1-7)"
+          sha="${{ github.event.pull_request.merge_commit_sha }}"
+          shortsha="${sha:0:7}"
 
-          # Clone the wiki repo
+          # Clone the wiki repo (separate git repo)
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
-
-          # Configure git identity for commit
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           cd ..
 
-          # For each changed md file, create a NEW wiki page (never overwrite)
-          for f in ${{ steps.changed.outputs.all_changed_files }}; do
+          # Process changed markdown files (added + modified)
+          for f in ${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}; do
             [ -f "$f" ] || continue
 
-            dir="$(dirname "$f")"
-            base="$(basename "$f" .md)"
+            target="wiki/$f"
+            mkdir -p "$(dirname "$target")"
 
-            # Put pages under the same folder structure in the wiki (optional).
-            # If you want everything flat in root, set: targetdir="."
-            targetdir="wiki/$dir"
-            mkdir -p "$targetdir"
-
-            target="$targetdir/${base}-PR${pr}-${shortsha}.md"
-            cp "$f" "$target"
-            echo "Added wiki page: $target"
+            if [ -f "$target" ]; then
+              {
+                echo ""
+                echo "---"
+                echo "_Appended from PR #${pr} (${shortsha})_"
+                echo ""
+                cat "$f"
+              } >> "$target"
+            else
+              cp "$f" "$target"
+            fi
           done
 
           cd wiki
           git add .
-          git commit -m "Append wiki pages from PR #${pr} (${shortsha})" || exit 0
+          git commit -m "Update wiki from PR #${pr} (${shortsha})" || exit 0
           git push
