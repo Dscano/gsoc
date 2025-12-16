@@ -1,47 +1,80 @@
-name: Publish Wiki
+name: Push Wiki Pages from PR
 
 on:
   pull_request:
     types: [closed]
 
 jobs:
-  publish:
+  push_wiki:
+    # Esegue solo se la PR è stata mergiata e ha la label "pushwikipage"
     if: >
       github.event.pull_request.merged == true &&
-      contains(github.event.pull_request.labels.*.name, 'publishwiki')
+      contains(github.event.pull_request.labels.*.name, 'pushwikipage')
     runs-on: ubuntu-latest
 
+    env:
+      # Modalità aggiornamento:
+      # - "append"  -> aggiunge il nuovo contenuto in fondo alla pagina wiki esistente
+      # - "replace" -> sovrascrive (aggiorna) la pagina wiki con il contenuto del file
+      WIKI_UPDATE_MODE: append
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - id: changed
+      - name: Lista file .md cambiati nella PR
+        id: changed
         uses: tj-actions/changed-files@v45
         with:
           base_sha: ${{ github.event.pull_request.base.sha }}
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Update wiki pages (md only)
+      - name: Crea/aggiorna pagine su GitHub Wiki (solo .md)
         if: steps.changed.outputs.all_changed_files != ''
         shell: bash
         run: |
           set -euo pipefail
 
+          pr="${{ github.event.pull_request.number }}"
+          sha="${{ github.event.pull_request.merge_commit_sha }}"
+          shortsha="${sha:0:7}"
+          mode="${WIKI_UPDATE_MODE}"
+
+          # Clona la wiki (repo separato: <repo>.wiki.git)
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cd ..
 
-          for f in ${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}; do
+          # Processa SOLO file .md toccati (added + modified)
+          files="${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}"
+          for f in $files; do
             [ -f "$f" ] || continue
+
+            # Nome pagina wiki = nome file (basename). Es: folder/a.md -> a.md
             page="$(basename "$f")"
-            cp "$f" "wiki/$page"
+            target="wiki/$page"
+
+            if [ "$mode" = "append" ] && [ -f "$target" ]; then
+              {
+                echo ""
+                echo "---"
+                echo "_Update da PR #${pr} (${shortsha})_"
+                echo ""
+                cat "$f"
+              } >> "$target"
+            else
+              # "replace" oppure pagina non esistente -> crea/aggiorna
+              cp "$f" "$target"
+            fi
           done
 
           cd wiki
           git add .
-          git commit -m "Update wiki from PR #${{ github.event.pull_request.number }}" || exit 0
+          git commit -m "Wiki update from PR #${pr} (${shortsha})" || exit 0
           git push
+
