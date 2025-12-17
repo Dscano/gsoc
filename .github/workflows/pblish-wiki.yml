@@ -38,7 +38,14 @@ jobs:
 
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
-          git checkout main
+
+          # Detect default branch (usually master for wikis)
+          default_branch="$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')"
+          if [ -z "${default_branch:-}" ]; then
+            default_branch="master"
+          fi
+          git checkout "$default_branch"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cd ..
@@ -95,4 +102,4 @@ jobs:
           cd wiki
           git add .
           git commit -m "Update wiki from PR #${pr} (${shortsha})" || exit 0
-          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" HEAD:main
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" HEAD:"$default_branch"
