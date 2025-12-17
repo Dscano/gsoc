@@ -29,9 +29,6 @@
 
 ## Abstract
 
-
-
-
 Kubernetes has recently introduced a container checkpoint/restore (C/R) feature to enable the creation of stateful snapshots for running containers. This feature allows containers to be restarted from checkpoints in different pods, enabling use cases such as live migration of microservices. However, preserving established TCP connections during migration is challenging because Kubernetes dynamically allocates IP addresses to Pods in the cluster. As a result, the restored container will run with a different IP address after migration, while clients will continue to send packets to the old IP address. This project aims to address this problem by developing a P4-based load balancer that keeps track of established TCP connections and routes application traffic to the correct IP address after container migration.
 
 ## Goals
