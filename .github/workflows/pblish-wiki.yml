@@ -1,4 +1,4 @@
-name: Push Wiki Pages
+name: Publish Wiki Pages
 
 on:
   pull_request:
@@ -8,10 +8,10 @@ permissions:
   contents: write
 
 jobs:
-  push_wiki_pages:
+  publish_wiki:
     if: >
       github.event.pull_request.merged == true &&
-      contains(github.event.pull_request.labels.*.name, 'pushwiki')
+      contains(github.event.pull_request.labels.*.name, 'publishwiki')
     runs-on: ubuntu-latest
 
     steps:
@@ -26,7 +26,7 @@ jobs:
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Create/Update wiki pages (title from H1) + update Home
+      - name: Update GitHub Wiki (H1 title, append, update Home)
         if: steps.changed.outputs.all_changed_files != ''
         shell: bash
         run: |
@@ -38,6 +38,7 @@ jobs:
 
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
+          git checkout main
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cd ..
@@ -49,7 +50,7 @@ jobs:
               | sed -e 's/[[:space:]]\+/-/g' -e 's/[^a-z0-9._-]//g' -e 's/-\{2,\}/-/g' -e 's/^-//; s/-$//'
           }
 
-          # Assicura Home.md
+          # Ensure Home.md exists
           if [ ! -f wiki/Home.md ]; then
             cat > wiki/Home.md <<'EOF'
           # Home
@@ -62,30 +63,36 @@ jobs:
           for f in $files; do
             [ -f "$f" ] || continue
 
-            # Titolo = primo H1 (# ...)
+            # Title = first H1 (# ...)
             title="$(grep -m1 -E '^#[[:space:]]+' "$f" | sed -E 's/^#[[:space:]]+//')"
             if [ -z "${title:-}" ]; then
               title="$(basename "$f" .md)"
             fi
 
             slug="$(slugify "$title")"
-            page="${slug}.md"
-            target="wiki/${page}"
+            [ -z "$slug" ] && slug="$(basename "$f" .md)"
+            target="wiki/${slug}.md"
 
-            # Aggiorna pagina: sovrascrive con il contenuto del file
-            cp "$f" "$target"
-
-            # Aggiorna Home: aggiunge link se non presente
-            # Link wiki: [[Titolo|slug]]
-            if ! grep -Fq "[[$title|$slug]]" wiki/Home.md; then
+            # Append if exists, otherwise create
+            if [ -f "$target" ]; then
               {
                 echo ""
-                echo "- [[$title|$slug]] (PR #${pr}, ${shortsha})"
-              } >> wiki/Home.md
+                echo "---"
+                echo "_Appended from PR #${pr} (${shortsha})_"
+                echo ""
+                cat "$f"
+              } >> "$target"
+            else
+              cp "$f" "$target"
+            fi
+
+            # Update Home index (avoid duplicates)
+            if ! grep -Fq "[[$title|$slug]]" wiki/Home.md; then
+              echo "- [[$title|$slug]]" >> wiki/Home.md
             fi
           done
 
           cd wiki
           git add .
           git commit -m "Update wiki from PR #${pr} (${shortsha})" || exit 0
-          git push
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" HEAD:main
