@@ -26,53 +26,121 @@ jobs:
           sha: ${{ github.event.pull_request.head.sha }}
           files: "**/*.md"
 
-      - name: Create or update wiki pages from markdown (title-based)
+      - name: Create/Update wiki pages + copy images
         if: steps.changed.outputs.all_changed_files != ''
         shell: bash
         run: |
           set -euo pipefail
 
-          # Clone the wiki repository (<repo>.wiki.git)
+          # Clone wiki repo
           git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
           cd wiki
-
           default_branch="$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')"
-          [ -z "$default_branch" ] && default_branch="master"
+          [ -z "${default_branch:-}" ] && default_branch="master"
           git checkout "$default_branch"
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cd ..
 
-          slugify () {
-            echo "$1" \
-              | sed -e 's/^[[:space:]]*//; s/[[:space:]]*$//' \
-              | tr '[:upper:]' '[:lower:]' \
-              | sed -e 's/[[:space:]]\+/-/g' \
-                    -e 's/[^a-z0-9._-]//g' \
-                    -e 's/-\{2,\}/-/g' \
-                    -e 's/^-//; s/-$//'
-          }
+          python3 - <<'PY'
+          import os, re, shutil, sys, pathlib
 
-          # Process all markdown files in the PR (even in nested folders)
-          files="${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}"
-          for f in $files; do
-            [ -f "$f" ] || continue
+          def slugify(s: str) -> str:
+              s = s.strip().lower()
+              s = re.sub(r"\s+", "-", s)
+              s = re.sub(r"[^a-z0-9._-]", "", s)
+              s = re.sub(r"-{2,}", "-", s).strip("-")
+              return s or "page"
 
-            # Read first H1 title (# ...)
-            title="$(grep -m1 -E '^#[[:space:]]+' "$f" | sed -E 's/^#[[:space:]]+//')"
-            [ -z "$title" ] && title="$(basename "$f" .md)"
+          # markdown image: ![alt](path "title")
+          md_img_re = re.compile(r'!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+          # html img: <img src="...">
+          html_img_re = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
 
-            page="$(slugify "$title")"
-            [ -z "$page" ] && page="$(basename "$f" .md)"
+          def is_remote(p: str) -> bool:
+              return p.startswith("http://") or p.startswith("https://") or p.startswith("data:")
 
-            # Wiki page name = title, content = full markdown file
-            cp "$f" "wiki/${page}.md"
+          def extract_title(md: str, fallback: str) -> str:
+              m = re.search(r'^\#\s+(.+?)\s*$', md, flags=re.MULTILINE)
+              return (m.group(1).strip() if m else fallback)
 
-            echo "Published wiki page: ${page}.md (from $f)"
-          done
+          files = (os.environ.get("FILES") or "").split()
+          wiki_root = pathlib.Path("wiki")
+          assets_root = wiki_root / "assets"
+          assets_root.mkdir(parents=True, exist_ok=True)
 
+          for f in files:
+              src_path = pathlib.Path(f)
+              if not src_path.is_file():
+                  continue
+
+              md = src_path.read_text(encoding="utf-8", errors="replace")
+              title = extract_title(md, src_path.stem)
+              page_slug = slugify(title)
+              page_file = wiki_root / f"{page_slug}.md"
+
+              # Collect image refs (markdown + html)
+              refs = []
+              refs += md_img_re.findall(md)
+              refs += html_img_re.findall(md)
+
+              src_dir = src_path.parent
+              page_assets_dir = assets_root / page_slug
+              page_assets_dir.mkdir(parents=True, exist_ok=True)
+
+              # Rewrite map: original ref -> new ref
+              rewrite = {}
+
+              for ref in refs:
+                  ref = ref.strip()
+                  if not ref or is_remote(ref):
+                      continue
+
+                  # Handle anchors/query minimally by stripping them for filesystem lookup
+                  ref_clean = ref.split("#", 1)[0].split("?", 1)[0]
+
+                  # Only relative paths (./, ../, or plain)
+                  # Resolve relative to the md file directory
+                  abs_src = (src_dir / ref_clean).resolve()
+                  if not abs_src.exists() or not abs_src.is_file():
+                      continue
+
+                  # Copy into wiki/assets/<page_slug>/<original_basename or path>
+                  # Preserve subfolders in the ref if present
+                  rel_sub = pathlib.Path(ref_clean)
+                  dest_path = (page_assets_dir / rel_sub).resolve()
+                  dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+                  shutil.copy2(abs_src, dest_path)
+
+                  # New link inside wiki page (relative from wiki root page file)
+                  new_ref = f"assets/{page_slug}/{rel_sub.as_posix()}"
+                  rewrite[ref] = new_ref
+                  # Also rewrite the cleaned variant if different (covers cases with query/hash)
+                  if ref_clean != ref:
+                      rewrite[ref_clean] = new_ref
+
+              # Apply rewrites (both markdown and html forms)
+              for old, new in rewrite.items():
+                  # Replace in markdown image links and any other occurrences (safe enough for typical docs)
+                  md = md.replace(f"({old})", f"({new})")
+                  md = md.replace(f'src="{old}"', f'src="{new}"')
+                  md = md.replace(f"src='{old}'", f"src='{new}'")
+
+              page_file.write_text(md, encoding="utf-8")
+              print(f"Published {f} -> {page_file} (title: {title})")
+
+          PY
+        env:
+          FILES: "${{ steps.changed.outputs.added_files }} ${{ steps.changed.outputs.modified_files }}"
+
+      - name: Commit and push wiki
+        shell: bash
+        run: |
+          set -euo pipefail
           cd wiki
+          default_branch="$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')"
+          [ -z "${default_branch:-}" ] && default_branch="master"
           git add .
           git commit -m "Publish wiki pages from PR #${{ github.event.pull_request.number }}" || exit 0
           git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" HEAD:"$default_branch"
