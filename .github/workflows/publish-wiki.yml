@@ -34,22 +34,21 @@ jobs:
           # Find all wiki.md files
           find . -name "wiki.md" -print0 | while IFS= read -r -d '' file; do
             # Expected format: ./YEAR/projects/PROJECT_NAME/wiki.md
+            # We need to extract YEAR and PROJECT_NAME
             
-            # Extract components using robust path manipulation
-            project_dir="$(dirname "$file")"
-            project_name="$(basename "$project_dir")"
-            parent_dir="$(dirname "$project_dir")"
-            grandparent_dir="$(dirname "$parent_dir")"
-            year="$(basename "$grandparent_dir")"
+            # Remove leading ./ if present
+            clean_path="${file#./}"
             
-            # Check if structure matches expected hierarchy (parent should be 'projects')
-            if [[ "$(basename "$parent_dir")" == "projects" && -n "$year" && -n "$project_name" ]]; then
-               # Explicitly construct the name with a hyphen separator
+            # Split path into components
+            IFS='/' read -r year projects_dir project_name filename <<< "$clean_path"
+            
+            # Verify structure match (basic check)
+            if [[ "$projects_dir" == "projects" && "$filename" == "wiki.md" && -n "$year" && -n "$project_name" ]]; then
                target_name="${year}-${project_name}.md"
                echo "Publishing $file to wiki/$target_name"
                cp "$file" "wiki/$target_name"
             else
-               echo "Skipping $file: structure $(basename "$parent_dir") != 'projects'"
+               echo "Skipping $file: does not match YEAR/projects/PROJECT_NAME/wiki.md pattern"
             fi
           done
 
