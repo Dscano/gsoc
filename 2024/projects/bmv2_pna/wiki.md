@@ -1,7 +1,7 @@
 # BMv2 PNA
 
 ## Link to report
-- [BMv2 PNA Report](/2024/projects/bmv2_pna/README.md)
+- [BMv2 PNA Report](/2024/projects/bmv2_pna/README.md) 
 
 ## New PNA NIC target in BMv2
 Relevant PRs:
