@@ -44,7 +44,8 @@ jobs:
             
             # Verify structure match (basic check)
             if [[ "$projects_dir" == "projects" && "$filename" == "wiki.md" && -n "$year" && -n "$project_name" ]]; then
-               target_name="${year}-${project_name}.md"
+               sanitized_project_name="${project_name//_/-}"
+               target_name="${year}-${sanitized_project_name}.md"
                echo "Publishing $file to wiki/$target_name"
                cp "$file" "wiki/$target_name"
             else
