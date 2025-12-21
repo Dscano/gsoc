@@ -31,30 +31,24 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cd ..
 
-          # Find all wiki.md files
-          find . -name "wiki.md" -print0 | while IFS= read -r -d '' file; do
-            # Expected format: ./YEAR/projects/PROJECT_NAME/wiki.md
-            # We need to extract YEAR and PROJECT_NAME
+          # Find files matching the specific project structure
+          find . -path "./*/projects/*/wiki.md" -print0 | while IFS= read -r -d '' file; do
+            # Path is guaranteed to be ./YEAR/projects/PROJECT_NAME/wiki.md by the find command itself
             
-            # Remove leading ./ if present
-            clean_path="${file#./}"
+            # Extract components using robust path manipulation
+            project_dir="$(dirname "$file")"
+            project_name="$(basename "$project_dir")"
+            # Getting year: file -> project_dir (NAME) -> parent (projects) -> grandparent (YEAR)
+            grandparent_dir="$(dirname "$(dirname "$project_dir")")"
+            year="$(basename "$grandparent_dir")"
             
-            # Split path into components
-            IFS='/' read -r year projects_dir project_name filename <<< "$clean_path"
-            
-            # Verify structure match (basic check)
-            if [[ "$projects_dir" == "projects" && "$filename" == "wiki.md" && -n "$year" && -n "$project_name" ]]; then
-               # Sanitize project_name: replace underscores with Unicode Hyphen (U+2010) '‐'
-               # This prevents GitHub Wiki from converting it to a space in the title
-               sanitized_project_name="${project_name//_/‐}"
+            # Sanitize project_name: replace underscores with Unicode Hyphen (U+2010) '‐'
+            sanitized_project_name="${project_name//_/‐}"
                
-               # Construct target name using Unicode Hyphen separator
-               target_name="${year}‐${sanitized_project_name}.md"
-               echo "Publishing $file to wiki/$target_name"
-               cp "$file" "wiki/$target_name"
-            else
-               echo "Skipping $file: does not match YEAR/projects/PROJECT_NAME/wiki.md pattern"
-            fi
+            # Construct target name
+            target_name="${year}‐${sanitized_project_name}.md"
+            echo "Publishing $file to wiki/$target_name"
+            cp "$file" "wiki/$target_name"
           done
 
           # Commit and push changes
