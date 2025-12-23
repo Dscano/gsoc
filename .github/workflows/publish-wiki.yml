@@ -15,6 +15,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check WIKI_TOKEN presence
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.WIKI_TOKEN }}" ]; then
+            echo "WIKI_TOKEN is NOT available (empty)."
+            exit 1
+          else
+            echo "WIKI_TOKEN is available."
+          fi
+
       - name: Checkout wiki repository
         env:
           WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
