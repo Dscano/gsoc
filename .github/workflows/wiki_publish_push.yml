@@ -6,6 +6,7 @@ on:
     types: [completed]
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -17,8 +18,10 @@ jobs:
       - name: Download publish marker
         uses: actions/download-artifact@v4
         with:
-          name: publishwiki
-          run-id: ${{ github.event.workflow_run.id }}
+            name: publishwiki
+            run-id: ${{ github.event.workflow_run.id }}
+            repository: ${{ github.repository }}
+            github-token: ${{ github.token }}
 
       - name: Checkout repository
         uses: actions/checkout@v4
